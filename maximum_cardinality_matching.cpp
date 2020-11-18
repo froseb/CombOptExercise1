@@ -285,13 +285,13 @@ bool unshrink_cycle(
         1) {
       edge_with_first_node_degree_1_idx = edge_id_idx;
       found_node_with_degree_1 = true;
-      // break;
+      break;
     } else if (new_matching_graph.node(cycle[edge_id_idx].second)
                    .neighbors()
                    .size() == 1) {
       edge_with_first_node_degree_1_idx = (edge_id_idx + 1) % cycle.size();
       found_node_with_degree_1 = true;
-      // break;
+      break;
     }
     assert(
         new_matching_graph.node(cycle[edge_id_idx].first).neighbors().size() <=

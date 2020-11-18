@@ -84,27 +84,29 @@ int main(int argc, char **argv) {
 
   size_t frustrated = 0;
   std::unordered_set<NodeId> removed_nodes;
+
+  // Nodes covered by alternating tree
   std::unordered_set<NodeId> covered_nodes;
   while (removed_nodes.size() < graph.num_nodes()) {
-    std::shared_ptr<ED::Graph> new_graph =
+    std::shared_ptr<ED::Graph> new_matching =
         std::make_shared<ED::Graph>(graph.num_nodes());
     MatchingExtensionResult result;
-    while ((result = extend_matching(graph, *current_matching, *new_graph,
+    while ((result = extend_matching(graph, *current_matching, *new_matching,
                                      covered_nodes, removed_nodes)) ==
            EXTENDED) {
-      if (current_matching->num_edges() >= new_graph->num_edges()) {
+      if (current_matching->num_edges() >= new_matching->num_edges()) {
         std::cout << "current_graph->num_edges(): "
                   << current_matching->num_edges()
-                  << ", new_graph->num_edges(): " << new_graph->num_edges()
+                  << ", new_graph->num_edges(): " << new_matching->num_edges()
                   << std::endl;
       }
-      assert(current_matching->num_edges() < new_graph->num_edges());
-      current_matching = new_graph;
+      assert(current_matching->num_edges() < new_matching->num_edges());
+      current_matching = new_matching;
       for (NodeId node_id = 0; node_id < current_matching->num_nodes();
            ++node_id) {
         assert(current_matching->node(node_id).neighbors().size() <= 1);
       }
-      new_graph = std::make_shared<ED::Graph>(graph.num_nodes());
+      new_matching = std::make_shared<ED::Graph>(graph.num_nodes());
       covered_nodes.clear();
       // std::cout << "num_edges: " << current_matching->num_edges() <<
       // std::endl;
