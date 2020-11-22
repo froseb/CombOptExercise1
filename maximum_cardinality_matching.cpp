@@ -9,13 +9,24 @@
 #include <unordered_set>
 #include <utility>
 
+using Edge = std::pair<ED::NodeId, ED::NodeId>;
+using ED::NodeId;
+
+enum MatchingExtensionResult { EXTENDED, FRUSTRATED, NOEXPOSEDNODE };
+
 struct Pseudonode {
+  // The nodes that the pseudonode consists of
   std::shared_ptr<std::vector<NodeId>> nodes =
       std::make_shared<std::vector<NodeId>>();
+  // The node of the pseudonode that is connected via an edge to the predecessor
   std::shared_ptr<NodeId> root;
+  // The index of the cycle in contraction_cycle_history which was contracted to
+  // this pseudonodes
   std::shared_ptr<size_t> cycle_idx;
 };
 
+// Returns a pseudonode that arises from merging a and b, where root and
+// cycle_idx of the new pseudonode are set to the parameters
 Pseudonode
 merge_pseudonodes(Pseudonode &a, Pseudonode &b, NodeId root, size_t cycle_idx,
                   std::unordered_map<NodeId, Pseudonode> &pseudonodes) {
@@ -32,6 +43,7 @@ merge_pseudonodes(Pseudonode &a, Pseudonode &b, NodeId root, size_t cycle_idx,
   return a;
 }
 
+// Adds a node to the pseudonode
 void add_node_to_pseudonode(
     Pseudonode &pseudonode, NodeId node_id,
     std::unordered_map<NodeId, Pseudonode> &pseudonodes) {
@@ -40,6 +52,8 @@ void add_node_to_pseudonode(
   pseudonodes[node_id] = pseudonode;
 }
 
+// Gets the root of a node, i.e. the root of the pseudonode in which the node is
+// contained if it is contained in a pseudonode, or the node itself otherwise
 NodeId node_root(NodeId node_id,
                  const std::unordered_map<NodeId, Pseudonode> &pseudonodes) {
   if (pseudonodes.count(node_id) > 0) {
@@ -61,6 +75,7 @@ NodeId predecessor(NodeId node_id,
   return predecessors.at(node_root(node_id, pseudonodes));
 }
 
+// Returns an exposed node if one exists or std::nullopt otherwise
 std::optional<NodeId>
 find_exposed_node(const Graph &matching_graph,
                   std::unordered_set<NodeId> &removed_nodes) {
@@ -74,6 +89,7 @@ find_exposed_node(const Graph &matching_graph,
   return std::nullopt;
 }
 
+// Adds an edge to the alternating tree
 void add_edge_to_tree(const Edge &edge,
                       std::unordered_map<NodeId, size_t> &node_dists,
                       std::unordered_map<NodeId, NodeId> &predecessors,
@@ -85,6 +101,7 @@ void add_edge_to_tree(const Edge &edge,
   covered_nodes.insert(edge.second);
 }
 
+// Adds edges adjacent to the node with id node_id to the edges_to_consider
 void add_adjacent_edges(
     NodeId node_id, const Graph &graph, const Graph &matching_graph,
     std::list<Edge> &edges_to_consider,
@@ -115,6 +132,7 @@ void add_adjacent_edges(
       }
     }
   }
+  // Edges that yield an augmenting path
   for (NodeId neighbor_id : graph.node(node_id).neighbors()) {
     if (removed_nodes.count(neighbor_id) == 0 and
         node_root(neighbor_id, pseudonodes) !=
@@ -172,6 +190,8 @@ cycle_edges(NodeId v1, NodeId v2,
                                               node_root(v1, pseudonodes));
 }
 
+// Extends the alternating tree and returns the second end node of an augmenting
+// path, if one was found
 std::optional<NodeId>
 extend_tree(const Edge &edge, const Graph &graph, const Graph &matching_graph,
             std::unordered_map<NodeId, Pseudonode> &pseudonodes,
@@ -257,8 +277,15 @@ extend_tree(const Edge &edge, const Graph &graph, const Graph &matching_graph,
   return std::nullopt;
 }
 
+// Unshrinks all cycles that have been created before max_cycle_idx such that
+// the node with id node_id is contained in the pseudonode after the cycle
+// contraction.
+// This is done from bottom to top, i.e. we unshrink the first cycle which
+// created a pseudonode where the node is contained and then proceed with the
+// next larger cycle until no larger cycle that was created before max_cycle_idx
+// exists
 void unshrink_subcycles(
-    NodeId node_id, size_t cycle_idx,
+    NodeId node_id, size_t max_cycle_idx,
     const std::vector<std::vector<Edge>> &contraction_cycle_history,
     const std::unordered_map<NodeId, size_t> &first_cycle,
     const std::unordered_map<size_t, size_t> &larger_cycle,
@@ -266,6 +293,9 @@ void unshrink_subcycles(
     const std::unordered_map<NodeId, size_t> &node_dists,
     const std::unordered_map<NodeId, Pseudonode> &pseudonodes);
 
+// Unshrinks a cycle by finding a node with degree 1 and adding each second edge
+// from the cycle, recursively calls unshrink_subcycles so that all cycles are
+// unshrinked
 bool unshrink_cycle(
     const std::vector<std::vector<Edge>> &contraction_cycle_history,
     size_t cycle_idx, const std::unordered_map<NodeId, size_t> &first_cycle,
@@ -339,7 +369,7 @@ bool unshrink_cycle(
 }
 
 void unshrink_subcycles(
-    NodeId node_id, size_t cycle_idx,
+    NodeId node_id, size_t max_cycle_idx,
     const std::vector<std::vector<Edge>> &contraction_cycle_history,
     const std::unordered_map<NodeId, size_t> &first_cycle,
     const std::unordered_map<size_t, size_t> &larger_cycle,
@@ -350,7 +380,7 @@ void unshrink_subcycles(
     return;
   }
   size_t current_cycle = first_cycle.at(node_id);
-  while (current_cycle < cycle_idx) {
+  while (current_cycle < max_cycle_idx) {
     unshrink_cycle(contraction_cycle_history, current_cycle, first_cycle,
                    larger_cycle, new_matching_graph, matching_graph, node_dists,
                    pseudonodes);
@@ -455,30 +485,80 @@ extend_matching(const Graph &graph, const Graph &matching_graph,
     edges_to_consider.erase(edge_iter);
   }
 
-  // Check for frustratedness
-  // TODO remove
-  // for (NodeId node_id = 0; node_id < graph.num_nodes(); ++node_id) {
-  //   if (node_dists.count(node_id) > 0 and removed_nodes.count(node_id) == 0
-  //   and
-  //       node_dist(node_id, node_dists, pseudonodes) % 2 == 0) {
-  //     for (NodeId neighbor_id : graph.node(node_id).neighbors()) {
-  //       if (removed_nodes.count(neighbor_id) == 0) {
-  //         if (not(node_dists.count(neighbor_id) > 0)) {
-  //           std::cout << node_id << std::endl;
-  //           std::cout << node_root(node_id, pseudonodes) << std::endl;
-  //           std::cout << neighbor_id << std::endl;
-  //           std::cout << node_root(neighbor_id, pseudonodes) << std::endl;
-  //         }
-  //         assert(node_dists.count(neighbor_id) > 0);
-  //         assert(node_dist(neighbor_id, node_dists, pseudonodes) % 2 == 1 or
-  //                node_root(node_id, pseudonodes) ==
-  //                    node_root(neighbor_id, pseudonodes));
-  //       }
-  //     }
-  //   }
-  // }
-
   covered_nodes.insert(*exposed_node_id);
 
   return FRUSTRATED;
+}
+
+Graph compute_maximum_cardinality_matching(const Graph &graph) {
+  std::shared_ptr<ED::Graph> current_matching =
+      std::make_shared<ED::Graph>(graph.num_nodes());
+  ED::Graph &greedy_matching = *current_matching;
+  for (ED::NodeId node_id = 0; node_id < graph.num_nodes(); ++node_id) {
+    if (greedy_matching.node(node_id).neighbors().empty()) {
+      for (ED::NodeId neighbor_id : graph.node(node_id).neighbors()) {
+        if (greedy_matching.node(neighbor_id).neighbors().empty()) {
+          greedy_matching.add_edge(node_id, neighbor_id);
+          break; // Do not add more edges incident to this node!
+        }
+      }
+    }
+  }
+
+  size_t frustrated = 0;
+  std::unordered_set<NodeId> removed_nodes;
+
+  // Nodes covered by alternating tree
+  std::unordered_set<NodeId> covered_nodes;
+  while (removed_nodes.size() < graph.num_nodes()) {
+    std::shared_ptr<ED::Graph> new_matching =
+        std::make_shared<ED::Graph>(graph.num_nodes());
+    MatchingExtensionResult result;
+    while ((result = extend_matching(graph, *current_matching, *new_matching,
+                                     covered_nodes, removed_nodes)) ==
+           EXTENDED) {
+      if (current_matching->num_edges() >= new_matching->num_edges()) {
+        std::cout << "current_graph->num_edges(): "
+                  << current_matching->num_edges()
+                  << ", new_graph->num_edges(): " << new_matching->num_edges()
+                  << std::endl;
+      }
+      assert(current_matching->num_edges() < new_matching->num_edges());
+      current_matching = new_matching;
+      for (NodeId node_id = 0; node_id < current_matching->num_nodes();
+           ++node_id) {
+        assert(current_matching->node(node_id).neighbors().size() <= 1);
+      }
+      new_matching = std::make_shared<ED::Graph>(graph.num_nodes());
+      covered_nodes.clear();
+    }
+    if (result == NOEXPOSEDNODE) {
+      break;
+    }
+    ++frustrated;
+    for (NodeId node_id : covered_nodes) {
+      removed_nodes.insert(node_id);
+    }
+  }
+
+  for (NodeId node_id = 0; node_id < current_matching->num_nodes(); ++node_id) {
+    assert(current_matching->node(node_id).neighbors().size() <= 1);
+    if (current_matching->node(node_id).neighbors().size() == 0) {
+      continue;
+    }
+    bool found = false;
+    for (NodeId neighbor_id : graph.node(node_id).neighbors()) {
+      if (neighbor_id == current_matching->node(node_id).neighbors().front()) {
+        found = true;
+      }
+    }
+    if (not found) {
+      std::cout << node_id << ", "
+                << current_matching->node(node_id).neighbors().front()
+                << std::endl;
+    }
+    assert(found);
+  }
+
+  return *current_matching;
 }
